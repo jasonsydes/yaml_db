@@ -56,12 +56,18 @@ module YamlDb
 
   class Load < SerializationHelper::Load
     def self.load_documents(io, truncate = true) 
-        YAML.load_documents(io) do |ydoc|
-          ydoc.keys.each do |table_name|
-            next if ydoc[table_name].nil?
-            load_table(table_name, ydoc[table_name], truncate)
-          end
+      YAML.load_documents(io) do |ydoc|
+        table_names = ActiveRecord::Base.connection.tables
+        stmt_disable = table_names.map{|table_name| "ALTER TABLE \"#{table_name}\" DISABLE TRIGGER ALL" }.join(';')
+        stmt_enable = table_names.map{|table_name| "ALTER TABLE \"#{table_name}\" ENABLE TRIGGER ALL" }.join(';')
+
+        ydoc.keys.each do |table_name|
+          next if ydoc[table_name].nil?
+          ActiveRecord::Base.connection.execute(stmt_disable)
+          load_table(table_name, ydoc[table_name], truncate)
+          ActiveRecord::Base.connection.execute(stmt_enable)
         end
+      end
     end
   end
 
