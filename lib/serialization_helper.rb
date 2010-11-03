@@ -28,7 +28,12 @@ module SerializationHelper
 
     def load(filename, truncate = true)
       disable_logger
-      @loader.load(File.new(filename, "r"), truncate)
+      ActiveRecord::Base.connection.transaction do
+        # Truncating postgres tables should be done all at once, due 
+        # to trickiness with constraints.  Otherwise, must use DELETE.
+        @loader.truncate_tables_postgresql
+        @loader.load(File.new(filename, "r"), truncate)
+      end
       reenable_logger
     end
 
@@ -59,13 +64,24 @@ module SerializationHelper
     end
 
     def self.truncate_table(table)
+      stmt_truncate = "TRUNCATE #{SerializationHelper::Utils.quote_table(table)};"
+      stmt_delete = "DELETE FROM #{SerializationHelper::Utils.quote_table(table)};" 
+      stmt = is_postgresql? ? stmt_delete : stmt_truncate
       begin
-        stmt_truncate = "TRUNCATE #{SerializationHelper::Utils.quote_table(table)}";
-        stmt_truncate += " CASCADE" if is_postgresql?
-        ActiveRecord::Base.connection.execute(stmt_truncate)
+        ActiveRecord::Base.connection.execute(stmt) 
+      rescue ActiveRecord::StatementInvalid => e
+        # Don't ignore invalid statements, see http://api.rubyonrails.org/classes/ActiveRecord/Transactions/ClassMethods.html
+        raise e
       rescue Exception => e
-        ActiveRecord::Base.connection.execute("DELETE FROM #{SerializationHelper::Utils.quote_table(table)}")
+        ActiveRecord::Base.connection.execute("stmt_delete")
       end
+    end
+
+    def self.truncate_tables_postgresql
+      return unless is_postgresql?
+      table_names = ActiveRecord::Base.connection.tables
+      stmt_truncate = "TRUNCATE TABLE " + table_names.join(", ") + ";"
+      ActiveRecord::Base.connection.execute(stmt_truncate)
     end
 
     def self.load_table(table, data, truncate = true)
@@ -103,15 +119,15 @@ module SerializationHelper
     end
 
     def self.disable_postgresql_triggers
-      table_names = ActiveRecord::Base.connection.tables
-      stmt_disable = table_names.map{|table_name| "ALTER TABLE \"#{table_name}\" DISABLE TRIGGER ALL" }.join(';')
+      table_names = ActiveRecord::Base.connection.tables.map {|t| SerializationHelper::Utils.quote_table(t)}
+      stmt_disable = table_names.map{|table_name| "ALTER TABLE #{table_name} DISABLE TRIGGER ALL" }.join(';')
       ActiveRecord::Base.connection.execute(stmt_disable) if is_postgresql?      
     end
 
     def self.enable_postgresql_triggers
-      table_names = ActiveRecord::Base.connection.tables
-      stmt_enable = table_names.map{|table_name| "ALTER TABLE \"#{table_name}\" ENABLE TRIGGER ALL" }.join(';')
-      ActiveRecord::Base.connection.execute(stmt_enable) if is_postgresql?      
+      table_names = ActiveRecord::Base.connection.tables.map {|t| SerializationHelper::Utils.quote_table(t)}
+      stmt_enable = table_names.map{|table_name| "ALTER TABLE #{table_name} ENABLE TRIGGER ALL" }.join(';')
+      ActiveRecord::Base.connection.execute(stmt_enable) if is_postgresql?
     end
   end
 
