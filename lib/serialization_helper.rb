@@ -79,8 +79,7 @@ module SerializationHelper
 
     def self.truncate_tables_postgresql
       return unless is_postgresql?
-      table_names = ActiveRecord::Base.connection.tables
-      stmt_truncate = "TRUNCATE TABLE " + table_names.join(", ") + ";"
+      stmt_truncate = "TRUNCATE TABLE " + tables_quoted.join(", ") + ";"
       ActiveRecord::Base.connection.execute(stmt_truncate)
     end
 
@@ -119,15 +118,21 @@ module SerializationHelper
     end
 
     def self.disable_postgresql_triggers
-      table_names = ActiveRecord::Base.connection.tables.map {|t| SerializationHelper::Utils.quote_table(t)}
-      stmt_disable = table_names.map{|table_name| "ALTER TABLE #{table_name} DISABLE TRIGGER ALL" }.join(';')
+      stmt_disable = tables_quoted.map{|table_name| "ALTER TABLE #{table_name} DISABLE TRIGGER ALL" }.join(';')
       ActiveRecord::Base.connection.execute(stmt_disable) if is_postgresql?      
     end
 
     def self.enable_postgresql_triggers
-      table_names = ActiveRecord::Base.connection.tables.map {|t| SerializationHelper::Utils.quote_table(t)}
-      stmt_enable = table_names.map{|table_name| "ALTER TABLE #{table_name} ENABLE TRIGGER ALL" }.join(';')
+      stmt_enable = tables_quoted.map{|table_name| "ALTER TABLE #{table_name} ENABLE TRIGGER ALL" }.join(';')
       ActiveRecord::Base.connection.execute(stmt_enable) if is_postgresql?
+    end
+        
+    def self.tables
+      ActiveRecord::Base.connection.tables.reject { |table| ['schema_info', 'schema_migrations'].include?(table) }
+    end
+
+    def self.tables_quoted
+      tables.map {|t| SerializationHelper::Utils.quote_table(t)}
     end
   end
 
